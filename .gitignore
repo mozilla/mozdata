@@ -1,0 +1,6 @@
+*.iml
+.DS_Store
+.coverage
+.idea/
+coverage.xml
+derby.log
