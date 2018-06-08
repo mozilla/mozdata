@@ -1,0 +1,16 @@
+ARG PYTHONTAG=2.7
+FROM python:$PYTHONTAG AS packages
+RUN rm -rf /var/cache/apt/archives && apt-get update && apt-get install --download-only -y libsnappy-dev openjdk-8-jre
+
+FROM python:$PYTHONTAG
+WORKDIR /app/python
+COPY --from=packages /var/cache/apt/archives/*.deb /var/cache/apt/archives/
+RUN dpkg -i /var/cache/apt/archives/*.deb
+RUN pip install pyspark
+COPY python/setup.py /app/python
+RUN mkdir -p src/mozdata && pip install .[dev] && pip uninstall -y mozdata
+# fix for https://github.com/spulec/moto/issues/1793
+RUN pip install 'boto3<1.8'
+COPY python /app/python
+COPY .git /app
+CMD py.test && (codecov || true)

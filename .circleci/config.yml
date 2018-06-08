@@ -1,0 +1,71 @@
+version: 2
+jobs:
+  scala_test:
+    docker: &sbt_image
+    - image: mozilla/sbt:8u171_1.2.1
+    steps:
+    - checkout
+    - &restore_cache
+      restore_cache:
+        keys:
+        - &cache_key mozdata-v1-{{ .Branch }}-{{ checksum "build.sbt" }}-{{ checksum "project/build.properties" }}-{{ checksum "project/plugins.sbt" }}
+        - mozdata-v1-{{ .Branch }}-{{ checksum "build.sbt" }}-{{ checksum "project/build.properties" }}
+        - mozdata-v1-{{ .Branch }}-{{ checksum "build.sbt" }}
+        - mozdata-v1-{{ .Branch }}
+        - mozdata-v1
+    - run:
+        name: Run tests
+        command: sbt -Dspark.testVersion=2.2.0 ++2.11.8 coverage test coverageReport
+        environment:
+          AWS_ACCESS_KEY_ID: foo
+          AWS_SECRET_ACCESS_KEY: bar
+    - save_cache:
+        key: *cache_key
+        paths:
+        - ~/.ivy2
+        - ~/.sbt
+    - run:
+        name: Submit code coverage data
+        command: bash <(curl -s https://codecov.io/bash)
+
+  scala_style:
+    docker: *sbt_image
+    steps:
+    - checkout
+    - *restore_cache
+    - run:
+        name: Check style
+        command: sbt ++2.11.8 scalastyle test:scalastyle
+
+  python27_test: &python27_test
+    docker:
+    - image: docker
+    environment:
+      PYTHONTAG: '2.7'
+    steps:
+    - checkout
+    - setup_remote_docker:
+        docker_layer_caching: true
+    - run:
+        name: Build test container
+        command: docker build . --file .circleci/Dockerfile.python --build-arg PYTHONTAG=$PYTHONTAG --tag mozdata:test-py$PYTHONTAG
+    - run:
+        name: Dump CircleCI env vars
+        command: env | grep '^CIRCLE\|CODECOV' > ci.env
+    - run:
+        name: Run tests
+        command: docker run --rm --tty --interactive --env-file ci.env mozdata:test-py$PYTHONTAG
+
+  python37_test:
+    <<: *python27_test
+    environment:
+      PYTHONTAG: '3.7'
+
+workflows:
+  version: 2
+  build:
+    jobs:
+    - scala_test
+    - scala_style
+    - python27_test
+    - python37_test
