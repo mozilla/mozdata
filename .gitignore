@@ -1,7 +1,9 @@
-target/
-lib_managed/
-metastore_db/
-.idea/
-derby.log
 *.iml
 .DS_Store
+.coverage
+.idea/
+coverage.xml
+derby.log
+lib_managed/
+metastore_db/
+target/
