@@ -5,3 +5,5 @@ metastore_db/
 derby.log
 *.iml
 .DS_Store
+.coverage
+coverage.xml
