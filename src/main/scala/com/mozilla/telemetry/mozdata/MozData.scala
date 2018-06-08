@@ -30,7 +30,7 @@ class MozData(spark: SparkSession, adHocTablesDir: String,
   val logger: Logger = Logger.getLogger(classOf[MozData])
 
   /** Report an interaction with this api */
-  private def log(action: String, metadata: Map[String, Option[String]] = Map()): Unit = {
+  private[mozdata] def log(action: String, metadata: Map[String, Option[String]] = Map()): Unit = {
     implicit val formats: Formats = DefaultFormats
     val ping: String = write(ListMap((metadata.collect {
       case (k, Some(v)) => k -> v
@@ -297,19 +297,24 @@ class MozData(spark: SparkSession, adHocTablesDir: String,
 }
 
 object MozData {
+  val defaultAdHocTablesDir: String = sys.env.getOrElse(
+    "AD_HOC_TABLES_DIR",
+    "s3://net-mozaws-prod-us-west-2-pipeline-analysis"
+  )
+  val defaultGlobalTablesDir: String = sys.env.getOrElse(
+    "GLOBAL_TABLES_DIR",
+    "s3://telemetry-parquet"
+  )
+  val defaultMetadataUpdateMethods: List[String] = sys.env.getOrElse(
+    "DEFAULT_METADATA_UPDATE_METHODS",
+    "sql_repair,sql_refresh"
+  ).split(",").toList
+
   def apply(spark: SparkSession,
-            adHocTablesDir: String = sys.env.getOrElse(
-              "AD_HOC_TABLES_DIR",
-              "s3://net-mozaws-prod-us-west-2-pipeline-analysis"
-            ),
-            globalTablesDir: String = sys.env.getOrElse(
-              "GLOBAL_TABLES_DIR",
-              "s3://telemetry-parquet"
-            ),
-            defaultMetadataUpdateMethods: List[String] = sys.env.getOrElse(
-              "DEFAULT_METADATA_UPDATE_METHODS",
-              "sql_repair,sql_refresh"
-            ).split(",").toList): MozData = new MozData(
+            adHocTablesDir: String = defaultAdHocTablesDir,
+            globalTablesDir: String = defaultGlobalTablesDir,
+            defaultMetadataUpdateMethods: List[String] = defaultMetadataUpdateMethods
+           ): MozData = new MozData(
     spark=spark,
     adHocTablesDir=adHocTablesDir,
     globalTablesDir=globalTablesDir,
