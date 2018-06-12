@@ -1,0 +1,20 @@
+language: scala
+sudo: false
+cache:
+  directories:
+    - $HOME/.ivy2
+    - $HOME/.sbt
+matrix:
+  include:
+    - jdk: openjdk8
+      scala: 2.11.8
+      python: 3.5
+      env: TEST_SPARK_VERSION="2.0.2" AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
+install:
+  - pip install moto[server] --user
+script:
+  - sbt -Dspark.testVersion=$TEST_SPARK_VERSION ++$TRAVIS_SCALA_VERSION coverage test coverageReport
+  - sbt ++$TRAVIS_SCALA_VERSION scalastyle
+  - sbt ++$TRAVIS_SCALA_VERSION "test:scalastyle"
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
