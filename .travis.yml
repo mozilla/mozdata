@@ -1,0 +1,22 @@
+language: scala
+sudo: false
+addons:
+  apt:
+    packages:
+    - libsnappy-dev
+cache:
+  directories:
+    - $HOME/.ivy2
+    - $HOME/.sbt
+matrix:
+  include:
+    - jdk: openjdk8
+      scala: 2.11.8
+      python: 2.7
+      env: TEST_SPARK_VERSION="2.0.2" AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
+install:
+  - pip install tox --user
+script:
+  - tox -c python/tox.ini
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
