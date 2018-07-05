@@ -11,6 +11,10 @@ import scala.util.matching.Regex
 object Utils {
   final val LocationInCreateTableStatementRegex: Regex = "(?s).*LOCATION[^']+'([^']+)'.*".r
 
+  def flattenValues[T,U](input: Map[T,Option[U]]): Map[T,U] = input.collect {
+    case (k, Some(v)) => k -> v
+  }
+
   /** check if version is in MozData version format */
   def isVersion(version: String): Boolean = version.matches("v[0-9]+")
 

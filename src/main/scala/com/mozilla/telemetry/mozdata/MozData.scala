@@ -6,7 +6,7 @@ package com.mozilla.telemetry.mozdata
 import java.util.UUID.randomUUID
 
 import com.mozilla.telemetry.heka.{Dataset, Message}
-import com.mozilla.telemetry.mozdata.Utils.{getTableInfo,isVersion,sparkListTables}
+import com.mozilla.telemetry.mozdata.Utils.{flattenValues,getTableInfo,isVersion,sparkListTables}
 import com.mozilla.telemetry.utils.S3Store
 import org.apache.log4j.Logger
 import org.apache.spark.rdd.RDD
@@ -60,14 +60,60 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
   /** Report an interaction with this api */
   private def log(action: String, event: Map[String, Option[String]]): Unit = {
     implicit val formats: Formats = DefaultFormats
-    val ping: String = write(ListMap((event.collect {
-      case (k, Some(v)) => k -> v
-    } + ("apiVersion" -> apiVersion, "apiCall" -> action)).toList.sorted:_*))
+    val ping: String = write(ListMap((
+      flattenValues(event) + ("apiVersion" -> apiVersion, "apiCall" -> action)
+    ).toList.sorted:_*))
     logger.debug(s"$ping")
     if (telemetryUrl.isDefined) {
       val url = s"${telemetryUrl.get}/submit/mozdata/event/1/${randomUUID.toString}"
       Http(url).postData(ping).header("content-type", "application/json").asString
     }
+  }
+
+  /** Describe a table available to readTable
+    *
+    * @param tableName table to describe
+    * @param version optional specific version of table, defaults to "v1" for
+    *                new tables and the latest version for existing tables
+    * @param owner optional email that identifies non-global namespace
+    * @param uri optional non-standard location for this table
+    */
+  def describeTable(tableName: String, version: Option[String] = None,
+                    owner: Option[String] = None, uri: Option[String] = None): Map[String,String] = {
+    val tableInfo = getTableInfo(
+      tableName=tableName,
+      version=version,
+      owner=owner,
+      uri=uri,
+      spark=spark,
+      adHocTablesDir=adHocTablesDir,
+      globalTablesDir=globalTablesDir
+    )
+
+    log(
+      action="describeTable",
+      Map(
+        "detectedUri" -> tableInfo.uri,
+        "detectedVersion" -> tableInfo.version,
+        "owner" -> owner,
+        "sqlTableName" -> tableInfo.sqlTableName,
+        "tableName" -> Some(tableName),
+        "version" -> version
+      )
+    )
+
+    flattenValues(Map(
+      "sqlTableName" -> tableInfo.sqlTableName,
+      "detectedUri" -> tableInfo.uri,
+      "detectedVersion" -> tableInfo.version
+    )) ++ (if (tableInfo.sqlTableName.isDefined) {
+      spark
+        .sql(s"SHOW TBLPROPERTIES `${tableInfo.sqlTableName.get}`")
+        .collect
+        .map{r=>r.getAs[String]("key")->r.getAs[String]("value")}
+        .filter(!_._1.startsWith("transient_"))
+        .toMap
+    } else {Map()})
   }
 
   /** List the rdds available to readRDD

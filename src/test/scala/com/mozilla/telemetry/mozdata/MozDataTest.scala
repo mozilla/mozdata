@@ -114,6 +114,75 @@ class MozDataTest extends FlatSpec with Matchers with DataFrameSuiteBase {
     ))
   }
 
+  // describeTable tests must be after listTables to avoid interference
+  "describeTable" must "describe unversioned global table" in {
+    val (tableName, version) = ("describe_table", "v1")
+    val uri = s"$globalTablesDir/$tableName/$version"
+    spark.sql(
+      s"""
+         |CREATE EXTERNAL TABLE `$tableName`(`0` int)
+         |PARTITIONED BY (`1` string)
+         |STORED AS TEXTFILE
+         |LOCATION '$uri'
+         |TBLPROPERTIES ('description'='$tableName $version')
+      """.stripMargin)
+    val meta = api.describeTable(tableName)
+    meta("sqlTableName") should be (tableName)
+    meta("detectedUri") should be (s"file:$uri")
+    meta("detectedVersion") should be (version)
+    meta("description") should be (s"$tableName $version")
+    verifyTelemetry(1, "describeTable", Map(
+      "detectedUri" -> s"file:$uri",
+      "detectedVersion" -> version,
+      "sqlTableName" -> tableName,
+      "tableName"->tableName
+    ))
+  }
+
+  it must "describe versioned view" in {
+    val (tableName, version) = ("describe_table", "v2")
+    spark.sql(s"CREATE OR REPLACE TEMP VIEW `${tableName}_$version` AS SELECT 0")
+    val meta = api.describeTable(tableName, version=Some(version))
+    meta("sqlTableName") should be (s"${tableName}_$version")
+    meta.contains("detectedUri") should be (false)
+    meta("detectedVersion") should be (version)
+    verifyTelemetry(1, "describeTable", Map(
+      "detectedVersion" -> version,
+      "sqlTableName" -> s"${tableName}_$version",
+      "tableName"->tableName,
+      "version" -> version
+    ))
+  }
+
+  it must "describe ad hoc table" in {
+    val (owner, tableName, version) = ("describe_table", "describe_table", "v1")
+    val uri = s"$adHocTablesDir/$owner/$tableName/$version"
+    val meta = api.describeTable(tableName, owner=Some(owner))
+    meta.contains("sqlTableName") should be (false)
+    meta("detectedUri") should be (uri)
+    meta("detectedVersion") should be (version)
+    verifyTelemetry(1, "describeTable", Map(
+      "detectedUri" -> uri,
+      "detectedVersion" -> version,
+      "owner" -> owner,
+      "tableName"->tableName
+    ))
+  }
+
+  it must "detect version in uri" in {
+    val (owner, tableName, version) = ("uri", "describe_table", "v0")
+    val uri = s"$adHocTablesDir/$owner/$tableName/$version"
+    val meta = api.describeTable(tableName, uri=Some(uri))
+    meta.contains("sqlTableName") should be (false)
+    meta("detectedUri") should be (uri)
+    meta("detectedVersion") should be (version)
+    verifyTelemetry(1, "describeTable", Map(
+      "detectedUri" -> uri,
+      "detectedVersion" -> version,
+      "tableName"->tableName
+    ))
+  }
+
   "readRDD" must "read rdd" in {
     def sortJValue(in: JValue): JValue = {
       in match {
@@ -628,7 +697,7 @@ class MozDataTest extends FlatSpec with Matchers with DataFrameSuiteBase {
   }
 
   it must "throw an exception on missing version" in {
-    val thrown = intercept[Exception] {
+    val thrown = intercept[IllegalArgumentException] {
       api.writeTable(
         df=spark.sql("SELECT 1"),
         tableName="view"
