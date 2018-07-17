@@ -6,13 +6,14 @@ package com.mozilla.telemetry.mozdata
 import java.util.UUID.randomUUID
 
 import com.mozilla.telemetry.heka.{Dataset, Message}
-import com.mozilla.telemetry.mozdata.Utils.{getTableInfo,isVersion,sparkListTables}
+import com.mozilla.telemetry.mozdata.Utils._
 import com.mozilla.telemetry.utils.S3Store
 import org.apache.log4j.Logger
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.json4s.jackson.Serialization.{read, write}
 import org.json4s.{DefaultFormats, Formats}
-import org.apache.spark.sql.{DataFrame,DataFrameReader,DataFrameWriter,Row,SparkSession}
+import org.apache.spark.sql._
 import scalaj.http.Http
 
 import scala.collection.immutable.ListMap
@@ -176,23 +177,23 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
                 owner: Option[String] = None, uri: Option[String] = None,
                 extraReadConfig: Function[DataFrameReader,DataFrameReader] = identity
                ): DataFrame = {
-    val tableInfo = getTableInfo(
-      tableName=tableName,
-      version=version,
-      owner=owner,
-      uri=uri,
-      spark=spark,
-      adHocTablesDir=adHocTablesDir,
-      globalTablesDir=globalTablesDir
+    val table = new Table(
+      spark,
+      adHocTablesDir,
+      globalTablesDir,
+      tableName,
+      version,
+      owner,
+      uri
     )
 
     log(
       action="readTable",
       Map(
-        "detectedUri" -> tableInfo.uri,
-        "detectedVersion" -> tableInfo.version,
+        "detectedUri" -> Some(table.readUri),
+        "detectedVersion" -> table.readVersion,
         "owner" -> owner,
-        "sqlTableName" -> tableInfo.sqlTableName,
+        "sqlTableName" -> Some(table.sqlTableName).filter(_=> !table.readWithLoad),
         "tableName" -> Some(tableName),
         "uri" -> uri,
         "version" -> version
@@ -201,10 +202,10 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
 
     val reader = extraReadConfig(readConfig(spark.read))
 
-    if (tableInfo.inCatalog) {
-      reader.table(tableInfo.sqlTableName.get)
+    if (table.readWithLoad) {
+      reader.load(table.readUri)
     } else {
-      reader.load(tableInfo.uri.get)
+      reader.table(table.readUri)
     }
   }
 
@@ -283,65 +284,78 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
                  extraWriteConfig: Function[DataFrameWriter[Row],DataFrameWriter[Row]] = identity,
                  metadataUpdateMethods: List[String] = defaultMetadataUpdateMethods): Unit = {
     require(
-      version.isDefined || owner.isDefined || uri.isDefined,
+      version.isDefined || owner.isDefined,
       "version required to write global table"
     )
 
-    val tableInfo = getTableInfo(
-      tableName=tableName,
-      version=version,
-      owner=owner,
-      uri=uri,
-      spark=spark,
-      adHocTablesDir=adHocTablesDir,
-      globalTablesDir=globalTablesDir
+    val table = new Table(
+      spark,
+      adHocTablesDir,
+      globalTablesDir,
+      tableName,
+      version,
+      owner,
+      uri,
+      partitionValues
     )
 
-    require(
-      tableInfo.uri.isDefined,
-      s"table is not external: ${tableInfo.sqlTableName.getOrElse(tableName)}"
-    )
-
-
-    // maybe find partition string
-    val partitionValuesString = partitionValues
-      .map{p=>s"${p._1}=${p._2}"}
-      .reduceLeftOption((a: String, b) => s"$a/$b")
-
-    // build uri
-    val detectedUri: String = List(
-      tableInfo.uri,
-      partitionValuesString
-    ).flatten.mkString("/")
-
-    if (!tableInfo.inCatalog && owner.isEmpty && uri.isEmpty) {
-      logger.warn(s"writing non-catalog global table: $detectedUri")
+    if (table.updateCatalog && !table.existsInCatalog) {
+      logger.warn(s"writing new global table: ${table.sqlTableName}")
     }
 
     log(
       "writeTable",
       Map(
-        "detectedUri" -> Some(detectedUri),
-        "detectedVersion" -> tableInfo.version,
+        "detectedUri" -> Some(table.writeUri),
+        "detectedVersion" -> table.writeVersion,
         "owner" -> owner,
-        "partition" -> partitionValuesString,
-        "sqlTableName" -> tableInfo.sqlTableName,
+        "partition" -> table.partitionValuesStrings.reduceLeftOption((a: String, b) => s"$a/$b"),
+        "sqlTableName" -> Some(table.sqlTableName).filter(_=>table.updateCatalog),
         "tableName" -> Some(tableName),
         "uri" -> uri,
         "version" -> version
       )
     )
 
-    extraWriteConfig(writeConfig(df.write)).save(detectedUri)
+    extraWriteConfig(writeConfig(df.write)).save(table.writeUri)
 
-    if (tableInfo.inCatalog) {
+    if (table.updateCatalog && table.existsInCatalog) {
       // update metadata on catalog tables
-      metadataUpdateMethods.foreach{
-        case "sql_repair" => spark.sql(s"MSCK REPAIR TABLE `${tableInfo.sqlTableName.get}`")
-        case "sql_refresh" => spark.sql(s"REFRESH TABLE `${tableInfo.sqlTableName.get}`")
+      metadataUpdateMethods.foreach {
+        case "sql_repair" => spark.sql(s"MSCK REPAIR TABLE `${table.sqlTableName}`")
+        case "sql_refresh" => spark.sql(s"REFRESH TABLE `${table.sqlTableName}`")
         case value => throw new IllegalArgumentException(s"Unsupported metadata location: $value")
       }
     }
+
+    /*
+    if owner.isEmpty: // only global tables
+      partition values = {}
+      partition columns = {values =>}
+      if exists:
+        if partition columns changed:
+          delete table
+          create table
+        else if columns changed: add columns
+        else if new partition values: add partitions
+      else:
+        create table
+
+
+      val columnSpec = df.schema.collect{
+        case f if !oldFields.contains(f.name) => s"`${f.name}` ${f.dataType.simpleString}"
+      }.mkString(", ")
+      // search for partitions
+      val newPartitions = Nil
+      val partitionSpec = ""
+      if ()
+      if (columnSpec != "") {
+        spark.sql(s"ALTER TABLE `${tableInfo.sqlTableName.get}` ADD COLUMNS ($columnSpec)")
+      }
+      if (partitionSpec != "") {
+        spark.sql(s"ALTER TABLE `${tableInfo.sqlTableName.get}` ADD PARTITIONS ($partitionSpec)")
+      }
+      */
   }
 }
 
