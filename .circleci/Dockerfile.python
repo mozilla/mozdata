@@ -9,6 +9,8 @@ RUN dpkg -i /var/cache/apt/archives/*.deb
 RUN pip install pyspark
 COPY python/setup.py /app/python
 RUN mkdir -p src/mozdata && pip install .[dev] && pip uninstall -y mozdata
+# fix for https://github.com/spulec/moto/issues/1793
+RUN pip install 'boto3<1.8'
 COPY python /app/python
 COPY .git /app
 CMD py.test && (codecov || true)

@@ -2,9 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, you can obtain one at http://mozilla.org/MPL/2.0/.
 
+from moztelemetry.dataset import Dataset
 from os import environ
 from uuid import uuid4
 
+import boto3
 import json
 import logging
 import pkg_resources
@@ -83,17 +85,17 @@ class MozData:
         self.write_config = write_config
         self.telemetry_url = telemetry_url
 
-    def _log(self, action, **kwargs):
+    def _log(self, action, **event):
         """Report an interaction with this api
 
         :param action: action being reported
         :type str:
-        :param **kwargs: fields describing the interaction
+        :param **event: fields describing the interaction
         :type Dict[str, str]:
         """
-        kwargs.update(apiVersion=__version__, apiCall=action)
+        event.update(apiVersion=__version__, apiCall=action)
         ping = json.dumps({
-            k: v for k, v in kwargs.items() if v is not None
+            k: v for k, v in event.items() if v is not None
         }, sort_keys=True)
         self.logger.debug(ping)
         if self.telemetry_url is not None:
@@ -102,6 +104,49 @@ class MozData:
                 ping.encode(),
                 headers={"content_type": "application/json"},
             )
+
+    def list_rdds(self):
+        """List the rdds available to readRDD
+
+        example:
+
+        # list raw dataset names
+        api = MozData(spark)
+        [source["name"] for source in api.list_rdds()]
+
+        :return: list of source metadata objects, each updated with name of
+            source
+        """
+        self._log("list_rdds")
+        bucket = "net-mozaws-prod-us-west-2-pipeline-metadata"
+        s3 = boto3.client("s3")
+        raw = s3.get_object(Bucket=bucket, Key="sources.json")["Body"].read()
+        sources = json.loads(raw)
+        return [
+            dict(name=name, **info)
+            for name, info in sources.items()
+        ]
+
+    def read_rdd(self, name, where=identity, **kwargs):
+        """Read a raw dataset
+
+        example:
+
+        # read a little bit of raw telemetry
+        api = MozData(spark)
+        rdd = api.read_rdd(
+            "telemetry",
+            where=lambda d: d.where(sourceVersion="4"),
+            limit=1,
+        )
+
+        :param name: dataset source name
+        :param where: function to configure Dataset where clauses
+        :param kwargs: passed to Dataset.records
+        :return: RDD of Messages read
+        """
+        self._log("read_rdd", name=name)
+        return where(Dataset.from_source(name)).records(sc=self.sc, **kwargs)
 
     def sql(self, query):
         """ Execute a SparkSQL query

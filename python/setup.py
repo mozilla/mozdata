@@ -25,13 +25,16 @@ setup(
         'mozdata',
     ],
     install_requires=[
+        'boto3',
         'pyspark',
+        'python_moztelemetry',
         'requests',
     ],
     extras_require={
         'dev': [
             'codecov',
             'mock',
+            'moto',
             'pytest-cov',
             'pytest-env',
             'pytest-flake8',
