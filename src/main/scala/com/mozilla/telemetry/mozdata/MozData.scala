@@ -22,12 +22,17 @@ import scala.io.Source
   *
   * example:
   *
+  * // create a custom dau by channel table
   * val api = MozData(spark)
-  * api.write(
-  *   api.read("main_summary")
+  * api.writeTable(
+  *   df=api.readTable("main_summary")
   *     .where("submission_date_s3='20180101'")
   *     .groupBy("submission_date_s3", "channel")
   *     .agg(countDistinct("client_id").as("dau"))
+  *     .drop("submission_date_s3"),
+  *   tableName="dau_by_channel",
+  *   partitionValues=List(("submission_date_s3", "20180101")),
+  *   owner=Some("nobody@mozilla.com")
   * )
   *
   * @param spark spark session used to access data
@@ -91,6 +96,7 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
     * example:
     *
     * val api = MozData(spark)
+    *
     * // list global tables
     * api.listTables()
     *
@@ -228,7 +234,7 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
     *   df=myDF,
     *   tableName="clients_daily",
     *   version=Some("v4"),
-    *   extraWriteConfig={_.mode("append").partitionBy("submission_date_s3")}
+    *   extraWriteConfig={_.mode("append").partitionBy("submission_date_s3")},
     *   // not a partitioned table, so exclude "sql_repair" from update methods
     *   metadataUpdateMethods=List("sql_refresh")
     * )
@@ -237,7 +243,7 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
     * api.writeTable(
     *   df=myDF.where("submission_date_s3='20180101'").drop("submission_date_s3"),
     *   tableName="special_dau",
-    *   partitionValues=List(("submission_date_s3","20180101")),
+    *   partitionValues=List(("submission_date_s3", "20180101")),
     *   owner=Some("nobody@mozilla.com"),
     *   extraWriteConfig={_.mode("overwrite").partitionBy("channel")}
     * )
@@ -255,7 +261,7 @@ class MozData(spark: SparkSession, adHocTablesDir: String, globalTablesDir: Stri
     *   df=myDF,
     *   tableName="special_list",
     *   version=Some("v1"),
-    *   extraWriteConfig={_.mode("overwrite")}
+    *   extraWriteConfig={_.mode("overwrite")},
     *   // not a partitioned table, so exclude "sql_repair" from update methods
     *   metadataUpdateMethods=List("sql_refresh")
     * )
