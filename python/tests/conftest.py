@@ -4,9 +4,14 @@
 
 from moto import mock_s3
 from moztelemetry.heka.message_pb2 import Field, Header, Message
+from pyspark.sql import SparkSession
 import boto3
+import mozdata
+import os
 import pytest
+import shutil
 import struct
+import tempfile
 
 
 class SparkFake:
@@ -20,6 +25,40 @@ class SparkFake:
 @pytest.fixture
 def spark_fake():
     return SparkFake()
+
+
+@pytest.fixture(scope="session")
+def resources_dir():
+    path = tempfile.mkdtemp()
+    yield path
+    shutil.rmtree(path)
+
+
+@pytest.fixture(scope="session")
+def api(resources_dir):
+    spark = (
+        SparkSession
+        .builder
+        .master("local")
+        .appName("python_mozdata_test")
+        .config(  # hive metastore path
+            "javax.jdo.option.ConnectionURL",
+            "jdbc:derby:;databaseName=%s;create=true" %
+            os.path.join(resources_dir, "metastore")
+        )
+        .config(
+            "spark.sql.warehouse.dir",
+            os.path.join(resources_dir, "warehouse")
+        )
+        .enableHiveSupport()
+        .getOrCreate()
+    )
+    yield mozdata.MozData(
+        spark=spark,
+        ad_hoc_tables_dir=os.path.join(resources_dir, "ad_hoc_tables"),
+        global_tables_dir=os.path.join(resources_dir, "global_tables"),
+    )
+    spark.stop()
 
 
 @pytest.fixture(scope="session")

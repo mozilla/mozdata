@@ -2,6 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, you can obtain one at http://mozilla.org/MPL/2.0/.
 
+from .utils import (
+    hadoop_ls,
+    is_version,
+    snake_case_to_camel,
+    spark_list_tables,
+)
 from moztelemetry.dataset import Dataset
 from os import environ
 from uuid import uuid4
@@ -95,7 +101,9 @@ class MozData:
         """
         event.update(apiVersion=__version__, apiCall=action)
         ping = json.dumps({
-            k: v for k, v in event.items() if v is not None
+            snake_case_to_camel(k): v
+            for k, v in event.items()
+            if v is not None
         }, sort_keys=True)
         self.logger.debug(ping)
         if self.telemetry_url is not None:
@@ -126,6 +134,42 @@ class MozData:
             dict(name=name, **info)
             for name, info in sources.items()
         ]
+
+    def list_tables(self, owner=None):
+        """List the tables available to read_table
+
+        example:
+
+        api = MozData(spark)
+
+        # list global tables
+        api.list_tables()
+
+        # list nobody@mozilla.com's tables
+        api.list_tables(owner=Some("nobody@mozilla.com"))
+
+        :param owner: optional email that identifies non-global namespace
+        :return: list of table names
+        """
+        self._log(
+            "list_tables",
+            owner=owner,
+            ad_hoc_tables_dir=owner and self.ad_hoc_tables_dir,
+        )
+        if owner is not None:
+            tables_uri = self.ad_hoc_tables_dir + "/" + owner
+            return [
+                table for table in hadoop_ls(self.spark, tables_uri)[0]
+                if any(
+                    is_version(version)
+                    for version in hadoop_ls(
+                        self.spark,
+                        tables_uri + "/" + table,
+                    )[0]
+                )
+            ]
+        else:
+            return spark_list_tables(self.spark)
 
     def read_rdd(self, name, where=identity, **kwargs):
         """Read a raw dataset
