@@ -3,6 +3,7 @@
 # file, you can obtain one at http://mozilla.org/MPL/2.0/.
 
 from .utils import (
+    TableInfo,
     hadoop_ls,
     is_version,
     snake_case_to_camel,
@@ -191,6 +192,70 @@ class MozData:
         """
         self._log("read_rdd", name=name)
         return where(Dataset.from_source(name)).records(sc=self.sc, **kwargs)
+
+    def read_table(self, table_name, version=None, owner=None, uri=None,
+                   extra_read_config=identity):
+        """Read a table
+
+        example:
+
+        api = MozData(spark)
+
+        # read a global table
+        clients_daily = api.read_table("clients_daily")
+
+        # read v1 of nobody@mozilla.com's special_dau table
+        special_dau_v1 = api.read_table(
+            table_name="special_dau",
+            owner="nobody@mozilla.com",
+            version="v1",
+            extra_read_config=lambda r: r.option("mergeSchema", "true"),
+        )
+
+        # read a json special_dau table defined by an s3 path
+        special_dau_v2 = api.read_table(
+            table_name="special_dau",
+            uri=Some("s3://special-bucket/special_dau/v2"),
+            extra_read_config=lambda r: r.format("json"),
+        )
+
+        :param table_name: table to read
+        :param version: optional specific version of table, defaults to "v1"
+            for new tables and the latest version for existing tables
+        :param owner: optional email that identifies non-global namespace
+        :param uri: optional non-standard location for this table
+        :param extra_read_config: optional function to configure the
+            DataFrameReader
+        :return: DataFrame of the requested table
+        """
+        # get table info
+        table_info = TableInfo(
+            table_name=table_name,
+            version=version,
+            owner=owner,
+            uri=uri,
+            spark=self.spark,
+            ad_hoc_tables_dir=self.ad_hoc_tables_dir,
+            global_tables_dir=self.global_tables_dir,
+        )
+
+        self._log(
+            "read_table",
+            detected_uri=table_info.uri,
+            detected_version=table_info.version,
+            owner=owner,
+            sql_table_name=table_info.sql_table_name,
+            table_name=table_name,
+            uri=uri,
+            version=version,
+        )
+
+        reader = extra_read_config(self.read_config(self.spark.read))
+
+        if table_info.in_catalog:
+            return reader.table(table_info.sql_table_name)
+        else:
+            return reader.load(table_info.uri)
 
     def sql(self, query):
         """ Execute a SparkSQL query
