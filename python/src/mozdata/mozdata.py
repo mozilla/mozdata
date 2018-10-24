@@ -146,7 +146,7 @@ class MozData:
         api.list_tables()
 
         # list nobody@mozilla.com's tables
-        api.list_tables(owner=Some("nobody@mozilla.com"))
+        api.list_tables(owner="nobody@mozilla.com")
 
         :param owner: optional email that identifies non-global namespace
         :return: list of table names
