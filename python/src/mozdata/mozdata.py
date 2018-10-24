@@ -154,7 +154,7 @@ class MozData:
         self._log(
             "list_tables",
             owner=owner,
-            ad_hoc_tables_dir=owner and self.ad_hoc_tables_dir,
+            ad_hoc_tables_dir=self.ad_hoc_tables_dir if owner else None,
         )
         if owner is not None:
             tables_uri = self.ad_hoc_tables_dir + "/" + owner
