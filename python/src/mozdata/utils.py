@@ -125,6 +125,7 @@ class TableInfo:
                     self.uri = None
 
     def _fs_table(self, table_uri):
+        """Set the table version and uri from the filesystem."""
         if self.version is None:
             versions = sorted(
                 [
