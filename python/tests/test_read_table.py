@@ -72,6 +72,7 @@ def test_read_ad_hoc_tables(ad_hoc_tables, api):
             owner=table.owner,
         ).collect() == [Row(value=table.content)]
     # test determining latest as last table in list
+    table = ad_hoc_tables[-1]
     assert api.read_table(
         table_name=table.name,
         owner=table.owner,
