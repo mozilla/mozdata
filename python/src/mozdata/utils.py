@@ -3,6 +3,7 @@
 # file, you can obtain one at http://mozilla.org/MPL/2.0/.
 
 import re
+from pyspark.sql.utils import AnalysisException
 
 location_in_create_table_statement_regex = re.compile(
     "(?s).*LOCATION[^']+'([^']+)'.*"
@@ -69,3 +70,73 @@ def spark_list_tables(spark, table_name=None):
             .collect()
         )
     ]
+
+
+def uri_version(uri):
+    """Try to get the table version from a uri
+
+    :param uri: uri from which to attempt version extraction
+    :return: version if found, or None
+    """
+    if uri is not None:
+        version = uri.split("/").pop()
+        if is_version(version):
+            return version
+
+
+class TableInfo:
+    def __init__(self, table_name, version, owner, uri, spark,
+                 ad_hoc_tables_dir, global_tables_dir):
+        self.spark = spark
+        self.table_name = table_name
+        self.version = version
+        self.owner = owner
+        self.uri = uri
+        self.in_catalog = False
+        self.sql_table_name = table_name
+        if version is not None:
+            self.sql_table_name += "_" + version
+
+        if uri is not None:
+            self.version = uri_version(uri)
+
+        elif owner is not None:
+            self._fs_table("/".join([ad_hoc_tables_dir, owner, table_name]))
+
+        else:
+            if len(spark_list_tables(self.spark, self.sql_table_name)) < 1:
+                # table is not present in catalog
+                self._fs_table(global_tables_dir + "/" + table_name)
+
+            else:
+                # table is present in catalog
+                self.in_catalog = True
+                try:
+                    match = location_in_create_table_statement_regex.match(
+                        self.spark.sql(
+                            "SHOW CREATE TABLE `%s`" % self.sql_table_name
+                        ).collect()[0].createtab_stmt,
+                    )
+                    if match is None:
+                        raise ValueError
+                    self.uri = match.groups()[0]
+                    self.version = uri_version(uri)
+                except (AnalysisException, ValueError):
+                    self.uri = None
+
+    def _fs_table(self, table_uri):
+        """Set the table version and uri from the filesystem."""
+        if self.version is None:
+            versions = sorted(
+                [
+                    v
+                    for v in hadoop_ls(self.spark, table_uri)[0]
+                    if is_version(v)
+                ],
+                key=lambda x: int(x[1:])
+            )
+            if versions:
+                self.version = versions.pop()
+            else:
+                self.version = "v1"
+        self.uri = table_uri + "/" + self.version
