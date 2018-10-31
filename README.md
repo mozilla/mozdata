@@ -4,7 +4,6 @@
 # MozData
 
 A consistent API for accessing Mozilla data that reports usage to Mozilla
-```
 
 ## Using MozData in scala
 
@@ -12,6 +11,7 @@ In SBT:
 ```sbt
 resolvers += "S3 local maven snapshots" at "s3://net-mozaws-data-us-west-2-ops-mavenrepo/snapshots"
 libraryDependencies += "com.mozilla.telemetry" %% "mozdata" % "0.1-SNAPSHOT"
+```
 
 ## Data Collection
 
