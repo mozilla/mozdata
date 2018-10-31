@@ -265,3 +265,146 @@ class MozData:
         """
         self._log("sql", query=query)
         return self.spark.sql(query)
+
+    def write_table(self, df, table_name, partition_values=None, version=None,
+                    owner=None, uri=None, metadata_update_methods=None,
+                    extra_write_config=identity):
+        """Write table to long term storage
+
+        example:
+
+        api = MozData(spark)
+        my_df = (0 to 5)
+            .map(v=>("20180101", v, "beta"))
+            .toDF("submission_date_s3", "test_value", "channel")
+
+        # append new partitions to a global table
+        api.write_table(
+            df=my_df,
+            table_name="clients_daily",
+            version="v4",
+            extra_write_config=
+                lambda w: w.mode("append").partitionBy("submission_date_s3"),
+            # not a partitioned table, so exclude "sql_repair"
+            metadata_update_methods=["sql_refresh"]
+        )
+
+        # write a single date to the latest version of
+        # nobody@mozilla.com's special_dau table
+        api.write_table(
+            df=my_df.drop("submission_date_s3"),
+            table_name="special_dau",
+            partition_values=[("submission_date_s3", "20180101")],
+            owner="nobody@mozilla.com",
+            extra_write_config=
+                lambda w: w.mode("overwrite").partitionBy("channel"),
+        )
+
+        # write a json table to a specific s3 path
+        api.write_table(
+            df=my_df.where("channel='beta'").drop("channel"),
+            table_name="special_dau",
+            uri="s3://special-bucket/special_dau/v2",
+            extra_write_config=lambda w: w.format("json"),
+        )
+
+        # write a non-partitioned global table
+        api.write_table(
+            df=my_df,
+            table_name="special_list",
+            version="v1",
+            extra_write_config=lambda w: w.mode("overwrite"),
+            # not a partitioned table, so exclude "sql_repair"
+            metadata_update_methods=["sql_refresh"]
+        )
+
+        :param df: DataFrame to write
+        :param table_name: table to write
+        :param partition_values: optional ordered list of key-value static
+            partition identifiers, which must be absent from df
+        :param version: specific version of table, required for global tables,
+            defaults to latest or "v1" if latest can't be determined
+        :param owner: optional email that identifies non-global namespace
+        :param uri: optional non-standard location for this table
+        :param metadata_update_methods: optional methods to use to update
+            metadata after writing partitioned global tables, default is
+            List("sql_repair", "sql_refresh")
+            WARNING default "sql_repair" method uses "MSCK REPAIR TABLE" which
+            will throw an exception if the table is not partitioned
+        :param extra_write_config: optional function to configure the
+            DataFrameWriter
+        """
+        if version is None and owner is None and uri is None:
+            raise ValueError("version required to write global table")
+
+        # get table info
+        table_info = TableInfo(
+            table_name=table_name,
+            version=version,
+            owner=owner,
+            uri=uri,
+            spark=self.spark,
+            ad_hoc_tables_dir=self.ad_hoc_tables_dir,
+            global_tables_dir=self.global_tables_dir,
+        )
+
+        if table_info.uri is None:
+            raise ValueError(
+                "table is not external: " +
+                (table_info.sql_table_name or table_name)
+            )
+
+        # get partition values as string
+        partition_values_string = "/".join(
+            "=".join([k, v])
+            for k, v in partition_values or []
+        ) or None
+
+        # get detected uri
+        detected_uri = table_info.uri
+        if partition_values_string:
+            detected_uri += "/" + partition_values_string
+
+        # log this api call
+        self._log(
+            "write_table",
+            detected_uri=detected_uri,
+            detected_version=table_info.version,
+            owner=owner,
+            partition=partition_values_string,
+            sql_table_name=table_info.sql_table_name,
+            table_name=table_name,
+            uri=uri,
+            version=version,
+        )
+
+        if owner is None and uri is None and not table_info.in_catalog:
+            self.logger.warning(
+                "writing non-catalog global table: " +
+                detected_uri
+            )
+
+        # write table
+        extra_write_config(self.write_config(df.write)).save(detected_uri)
+
+        # update metadata
+        if table_info.in_catalog:
+            for method in (
+                metadata_update_methods or
+                self.default_metadata_update_methods
+            ):
+                if method == "sql_repair":
+                    self.spark.sql(
+                        "MSCK REPAIR TABLE `%s`" %
+                        table_info.sql_table_name
+                    )
+                elif method == "sql_refresh":
+                    self.spark.sql(
+                        "REFRESH TABLE `%s`" %
+                        table_info.sql_table_name
+                    )
+                else:
+                    raise ValueError(
+                        "Unknown metadata update method: " +
+                        method
+                    )
